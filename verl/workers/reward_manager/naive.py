@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections import defaultdict
-from typing import Any
+from typing import Any, List, Optional
 
 import torch
 
@@ -116,6 +116,178 @@ class NaiveRewardManager(AbstractRewardManager):
                         print(f"[{key}]", value)
                 else:
                     print("[score]", score)
+
+        if return_dict:
+            return {
+                "reward_tensor": reward_tensor,
+                "reward_extra_info": reward_extra_info,
+            }
+        else:
+            return reward_tensor
+
+def default_simple_reward(
+    reward: List[float],
+    completion_ids: List[List[int]],
+    gold_completion_ids: List[List[int]],
+    **kwargs,
+) -> List[float]:
+    rewards = []
+    for _reward, comp, gold_comp in zip(reward, completion_ids, gold_completion_ids):
+        _reward = float(comp == gold_comp) * float(_reward)
+        rewards.append(_reward)
+    return rewards
+
+
+@register("swe_bench_naive")
+class SweRewardManager(AbstractRewardManager):
+    """适配 SWE-bench offline 数据格式的 RewardManager."""
+
+    def __init__(self, tokenizer, num_examine, compute_score=None, reward_fn_key: str = "data_source") -> None:
+        """
+        Args:
+            tokenizer: 用于 decode 的 tokenizer。
+            num_examine: 每个 data_source 最多打印多少条样本做调试。
+            compute_score: 计算 reward 的函数
+            reward_fn_key: 
+        """
+        self.tokenizer = tokenizer
+        self.num_examine = num_examine
+        # 使用上面定义的 simple_reward 逻辑
+        self.compute_score = default_simple_reward
+        self.reward_fn_key = reward_fn_key
+
+    def __call__(self, data: DataProto, return_dict: bool = False) -> torch.Tensor | dict[str, Any]:
+        """
+        - 从 data.batch["responses"] 取出模型生成的 completion token。
+        - 从 data.non_tensor_batch["gold_completion_ids"] 取出 gold 序列。
+        - 从 data.non_tensor_batch["reward"] 取出基础 reward 标量。
+        - 如果 completion_ids == gold_completion_ids → 给这个基础 reward；
+          否则 reward 为 0。
+        - reward 只打在最后一个有效 response token 上。
+        """
+
+        # 如果上游已经给了 rm_scores，就直接用（保持兼容）
+        if "rm_scores" in data.batch.keys():
+            if return_dict:
+                reward_extra_keys = data.meta_info.get("reward_extra_keys", [])
+                reward_extra_info = {key: data.non_tensor_batch[key] for key in reward_extra_keys}
+                return {"reward_tensor": data.batch["rm_scores"], "reward_extra_info": reward_extra_info}
+            else:
+                return data.batch["rm_scores"]
+
+        responses = data.batch["responses"]            # [B, resp_len]
+        attention_mask = data.batch["attention_mask"]  # [B, prompt_len + resp_len]
+        prompts = data.batch["prompts"]                # [B, prompt_len]
+
+        device = responses.device
+        batch_size, resp_len = responses.shape
+
+        # 初始化 reward_tensor，形状与 responses 一致
+        reward_tensor = torch.zeros_like(responses, dtype=torch.float32, device=device)
+
+        reward_extra_info = defaultdict(list)
+
+        already_print_data_sources: dict[Any, int] = {}
+
+        base_rewards: List[float] = []
+        completion_list: List[List[int]] = []
+        gold_completion_list: List[List[int]] = []
+
+        for i in range(len(data)):
+            data_item = data[i]
+
+            prompt_ids = data_item.batch["prompts"]           # [prompt_len]
+            attn = data_item.batch["attention_mask"]          # [prompt_len + resp_len]
+            response_ids = data_item.batch["responses"]       # [resp_len]
+
+            prompt_len = prompt_ids.shape[-1]
+            # 有效 prompt 长度
+            valid_prompt_len = int(attn[:prompt_len].sum().item())
+            # 有效 response 长度
+            valid_resp_len = int(attn[prompt_len:].sum().item())
+
+            # 取有效的 completion token
+            valid_response_ids = response_ids[:valid_resp_len]  # tensor [valid_resp_len]
+
+            # gold completion ids 在 non_tensor_batch 里
+            # 假设是 python list[int] 或 1D tensor
+            gold_completion_ids = data_item.non_tensor_batch["gold_completion_ids"]
+            if isinstance(gold_completion_ids, torch.Tensor):
+                gold_completion_ids = gold_completion_ids.tolist()
+
+            # 基础 reward 标量
+            base_reward = float(data_item.non_tensor_batch["reward"])
+
+            # 收集给 compute_score 使用
+            base_rewards.append(base_reward)
+            completion_list.append(valid_response_ids.tolist())
+            gold_completion_list.append(gold_completion_ids)
+
+        # ==== 使用 simple_reward 逻辑统一计算所有样本的最终 reward ====
+        final_rewards: List[float] = self.compute_score(
+            reward=base_rewards,
+            completion_ids=completion_list,
+            gold_completion_ids=gold_completion_list,
+        )
+
+        # ==== 把 reward 写回 reward_tensor====
+        for i in range(len(data)):
+            data_item = data[i]
+
+            prompt_ids = data_item.batch["prompts"]
+            attn = data_item.batch["attention_mask"]
+            response_ids = data_item.batch["responses"]
+
+            prompt_len = prompt_ids.shape[-1]
+            valid_prompt_len = int(attn[:prompt_len].sum().item())
+            valid_resp_len = int(attn[prompt_len:].sum().item())
+            valid_response_ids = response_ids[:valid_resp_len]
+
+            gold_completion_ids = data_item.non_tensor_batch["gold_completion_ids"]
+            if isinstance(gold_completion_ids, torch.Tensor):
+                gold_completion_ids = gold_completion_ids.tolist()
+
+            # 最终 reward（已经带了 “是否匹配 gold” 的逻辑）
+            reward_value = float(final_rewards[i])
+
+            # 只在最后一个有效 response token 上打 reward
+            if valid_resp_len > 0:
+                reward_tensor[i, valid_resp_len - 1] = reward_value
+
+            # ==== 构造一些可选的 extra info ====
+            # 完整 prompt / gold / response 字符串（优先用原始字符串字段）
+            prompt_str = data_item.non_tensor_batch.get(
+                "prompt",
+                self.tokenizer.decode(prompt_ids[-valid_prompt_len:], skip_special_tokens=True),
+            )
+            response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=True)
+            gold_str = data_item.non_tensor_batch.get(
+                "gold_completion",
+                self.tokenizer.decode(gold_completion_ids, skip_special_tokens=True),
+            )
+
+            # data_source 可选：如果你没有这个字段，下面两行可以删除/换成别的 key
+            data_source = data_item.non_tensor_batch.get(self.reward_fn_key, "default")
+
+            matched = completion_list[i] == gold_completion_list[i]
+
+            reward_extra_info["base_reward"].append(base_rewards[i])
+            reward_extra_info["final_reward"].append(reward_value)
+            reward_extra_info["matched_gold"].append(matched)
+
+            # 打印调试
+            if data_source not in already_print_data_sources:
+                already_print_data_sources[data_source] = 0
+
+            if already_print_data_sources[data_source] < self.num_examine:
+                already_print_data_sources[data_source] += 1
+                print(f"[data_source] {data_source}")
+                print("[prompt]", prompt_str)
+                print("[response]", response_str)
+                print("[gold_completion]", gold_str)
+                print("[base_reward]", base_rewards[i])
+                print("[matched_gold]", matched)
+                print("[final_reward]", reward_value)
 
         if return_dict:
             return {

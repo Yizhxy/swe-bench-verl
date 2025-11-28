@@ -6,6 +6,7 @@ set -x
 #
 #   python3 examples/data_preprocess/math_dataset.py --local_dir ~/data/math
 #   python3 examples/data_preprocess/gsm8k.py --local_save_dir ~/data/gsm8k
+CUDA_VISIBLE_DEVICES=1,2,3,4 \
 
 gsm8k_train_path=$HOME/data/gsm8k/train.parquet
 gsm8k_test_path=$HOME/data/gsm8k/test.parquet
@@ -64,8 +65,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.project_name='verl_example' \
     trainer.val_before_train=False \
     trainer.experiment_name='Qwen2-7B-Instruct_hybrid_rm' \
-    trainer.n_gpus_per_node=8 \
+    trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.save_freq=20 \
     trainer.test_freq=5 \
-    trainer.total_epochs=15 $@
+    trainer.total_epochs=15 2>&1 | tee verl_demo_rm.log

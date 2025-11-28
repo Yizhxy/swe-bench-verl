@@ -29,7 +29,7 @@ max_prompt_length: 512
 max_response_length: 512
 
 # Batch size sampled for one training iteration of different RL algorithms.
-train_batch_size: 1024
+train_batch_size: 256
 
 # Batch size used during validation. Can be null.
 val_batch_size: null

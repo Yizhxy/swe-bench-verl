@@ -14,18 +14,37 @@
 # Adapted from https://github.com/EleutherAI/lm-evaluation-harness/blob/main/lm_eval/tasks/hendrycks_math/utils.py
 
 
+# def compute_score(solution_str, ground_truth) -> float:
+#     retval = 0.0
+#     try:
+#         string_in_last_boxed = last_boxed_only_string(solution_str)
+#         if string_in_last_boxed is not None:
+#             answer = remove_boxed(string_in_last_boxed)
+#             if is_equiv(answer, ground_truth):
+#                 retval = 1.0
+#     except Exception as e:
+#         print(e)
+
+#     return retval
+
+FORMAT_REWARD = 0.1
+CORRECT_REWARD = 0.9
+
 def compute_score(solution_str, ground_truth) -> float:
     retval = 0.0
     try:
-        string_in_last_boxed = last_boxed_only_string(solution_str)
-        if string_in_last_boxed is not None:
-            answer = remove_boxed(string_in_last_boxed)
-            if is_equiv(answer, ground_truth):
-                retval = 1.0
-    except Exception as e:
-        print(e)
+        boxed_str = last_boxed_only_string(solution_str)
+        if boxed_str is not None:
+            retval += FORMAT_REWARD
 
-    return retval
+            answer = remove_boxed(boxed_str)
+            if is_equiv(answer, ground_truth):
+                retval += CORRECT_REWARD
+
+    except Exception as e:
+        print(f"[compute_score] Exception: {e}")
+
+    return min(retval, 1.0)
 
 
 # string normalization from https://github.com/EleutherAI/lm-evaluation-harness/blob/master/lm_eval/tasks/hendrycks_math.py

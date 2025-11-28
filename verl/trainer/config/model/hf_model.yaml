@@ -7,7 +7,7 @@
 _target_: verl.workers.config.HFModelConfig
 
 # path to the huggingface model
-path: ~/models/deepseek-llm-7b-chat
+path: Qwen/Qwen2.5-0.5B-Instruct
 
 # config to the huggingface config. In case it is not the same as path
 hf_config_path: null

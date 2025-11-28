@@ -30,7 +30,8 @@ from transformers import PreTrainedTokenizer, ProcessorMixin
 
 import verl.utils.torch_functional as verl_F
 from verl.utils.model import compute_position_id_with_mask
-
+# from verl.actor_rollout.vllm.utils import get_response_mask
+from verl.utils.torch_functional import get_response_mask, pad_2d_list_to_length
 logger = logging.getLogger(__name__)
 
 
@@ -122,6 +123,7 @@ class RLHFDataset(Dataset):
         self._read_files_and_tokenize()
 
     def _download(self, use_origin_parquet=False):
+        print("Downloading dataset...")
         from verl.utils.fs import copy_to_local
 
         data_files = self.data_files if not use_origin_parquet else self.original_data_files
@@ -129,10 +131,12 @@ class RLHFDataset(Dataset):
             self.data_files[i] = copy_to_local(src=parquet_file, cache_dir=self.cache_dir, use_shm=self.use_shm)
 
     def _read_files_and_tokenize(self):
+        print("reading files and tokenizing...")
         dataframes = []
         for parquet_file in self.data_files:
             # read parquet files and cache
             dataframe = datasets.load_dataset("parquet", data_files=parquet_file)["train"]
+            print("appending a parquet file")
             dataframes.append(dataframe)
         self.dataframe: datasets.Dataset = datasets.concatenate_datasets(dataframes)
 
@@ -178,9 +182,18 @@ class RLHFDataset(Dataset):
                             doc[prompt_key], add_generation_prompt=True, **self.apply_chat_template_kwargs
                         )
                     )
+                
+                def doc2len_2(doc) -> int:
+                    prompt_key = "prompt_ids"
+                    # print(len(doc[prompt_key]))
+                    return len(
+                            doc[prompt_key]
+                    )
+                def doc2len_3(doc) -> int:
+                    return len(doc["gold_completion_ids"])
 
             dataframe = dataframe.filter(
-                lambda doc: doc2len(doc) <= self.max_prompt_length,
+                lambda doc: doc2len_2(doc) <= self.max_prompt_length and (doc2len_3(doc) < 4096),
                 num_proc=self.num_workers,
                 desc=f"Filtering prompts longer than {self.max_prompt_length} tokens",
             )
@@ -381,3 +394,146 @@ class RLHFDataset(Dataset):
             return state
 
         return self.__dict__.copy()
+
+class OfflineSweDataset(RLHFDataset):
+    """
+    """
+
+    def __init__(self, data_files, tokenizer, config, processor: Optional[ProcessorMixin] = None):
+        super().__init__(data_files=data_files, tokenizer=tokenizer, config=config, processor=processor)
+
+        # 复用原有配置
+        self.truncation = self.config.get("truncation", "error")
+        self.max_prompt_length = self.config.get("max_prompt_length", 1024)
+
+        # offline 额外的长度配置：response 和 总长度（目前没用到也没关系）
+        self.offline_max_response_length = self.config.get(
+            "offline_max_response_length",
+            self.max_prompt_length,
+        )
+        self.offline_max_total_length = self.config.get(
+            "offline_max_total_length",
+            self.max_prompt_length + self.offline_max_response_length,
+        )
+
+    def __getitem__(self, idx: int) -> dict:
+        row = self.dataframe[idx]
+
+        # ===== 1. prompt：沿用原 RLHFDataset 的逻辑，左 pad 到 max_prompt_length =====
+        prompt_ids = torch.tensor(row["prompt_ids"], dtype=torch.long).unsqueeze(0)  # [1, Lp]
+        prompt_attn = torch.ones_like(prompt_ids)  # [1, Lp]
+
+        prompt_ids_pad, prompt_attn_pad = verl_F.postprocess_data(
+            input_ids=prompt_ids,
+            attention_mask=prompt_attn,
+            max_length=self.max_prompt_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            left_pad=True,
+            truncation=self.truncation,
+        )
+        prompt_ids_pad = prompt_ids_pad[0]      # [max_prompt_length]
+        prompt_attn_pad = prompt_attn_pad[0]    # [max_prompt_length]
+
+        # prompt-only 版本，直接作为 prompts 送进 DataProto
+        prompts = prompt_ids_pad.clone()        # [max_prompt_length]
+
+        # 计算有效 prompt token 数（去掉左 pad）
+        prompt_valid_len = int(prompt_attn_pad.sum().item())
+        prompt_tokens = prompt_ids_pad[-prompt_valid_len:]  # [prompt_valid_len]
+
+        # ===== 2. response：从 gold_completion_ids 构造，保持与 generate_sequences 一致 =====
+        resp_ids_raw = torch.tensor(row["gold_completion_ids"], dtype=torch.long)  # [R_raw]
+        resp_len_raw = int(resp_ids_raw.size(0))
+
+        # 使用与 online rollout 相同的 response_length
+        # 注意：这里假设 data.max_response_length == actor_rollout_ref.rollout.response_length
+        response_length = self.config.max_response_length
+
+        # 先截断到 response_length
+        if resp_len_raw > response_length:
+            resp_ids = resp_ids_raw[:response_length]
+        else:
+            resp_ids = resp_ids_raw
+
+        # 再右 pad 到 response_length（和 pad_2d_list_to_length 一样）
+        if resp_ids.size(0) < response_length:
+            pad_r = response_length - resp_ids.size(0)
+            pad_tokens = torch.full((pad_r,), self.tokenizer.pad_token_id, dtype=torch.long)
+            responses = torch.cat([resp_ids, pad_tokens], dim=0)  # [response_length]
+        else:
+            responses = resp_ids  # [response_length]
+
+        # ===== 3. 构造完整 input_ids：左 pad prompt + 右 pad response =====
+        # 对齐 generate_sequences 里的 seq = torch.cat([idx, response], dim=-1)
+        input_ids_full = torch.cat([prompts, responses], dim=0)  # [max_prompt_length + response_length]
+
+        # ===== 4. attention_mask：prompt 原样 + get_response_mask =====
+        # prompt 部分 mask 就用 prompt_attn_pad
+        attention_prompt = prompt_attn_pad  # [max_prompt_length]
+
+        # get_response_mask: 根据 eos 截断 response 的有效部分，后面（含 pad）为 0
+        response_attention_mask = get_response_mask(
+            response_id=responses.unsqueeze(0),  # [1, response_length]
+            eos_token=self.tokenizer.eos_token_id,
+            dtype=attention_prompt.dtype,
+        )[0]  # [response_length]
+
+        attention_full = torch.cat(
+            [attention_prompt, response_attention_mask], dim=0
+        )  # [max_prompt_length + response_length]
+
+        # ===== 5. position_ids：先算 prompt，再按“最后一个 + delta”扩展 =====
+        position_prompt = compute_position_id_with_mask(
+            attention_prompt.unsqueeze(0)
+        )[0]  # [max_prompt_length]
+
+        # response 部分 position_ids：最后一个 prompt 的 position + 1,2,3,...
+        delta_position_id = torch.arange(
+            1,
+            response_length + 1,
+            device=position_prompt.device,
+            dtype=position_prompt.dtype,
+        )  # [response_length]
+        last_pos = position_prompt[-1]  # 标量
+        response_position_ids = last_pos + delta_position_id  # [response_length]
+
+        position_full = torch.cat(
+            [position_prompt, response_position_ids], dim=0
+        )  # [max_prompt_length + response_length]
+
+        # ===== 6. response_mask：只对 response 段，形状 = [response_length] =====
+        # ★★★ CHANGED: 原来是做成 [max_prompt_length + response_length]，现在改成与 entropys 对齐的 [response_length]
+        # entropys / log_probs 的形状是 (bs, response_length)，所以 response_mask 也必须是 (bs, response_length)
+        response_mask = (response_attention_mask > 0).long()   # [response_length]
+
+        # ===== 7. rollout_log_probs：同样只对 response 段，形状 = [response_length] =====
+        # ★★★ CHANGED: 在线 generate_sequences 里 rollout_log_probs 的 shape 也是 (bs, response_length)，
+        # 所以这里也保持 [response_length]，而不是整段 seq_len。
+        if "logprobs" in row and row["logprobs"] is not None:
+            lp = torch.tensor(row["logprobs"], dtype=torch.float)  # [R_raw]
+            # 截断到 response_length
+            lp = lp[:response_length]
+            # 右 pad 到 response_length（与 responses 对齐）
+            if lp.size(0) < response_length:
+                pad_lp = torch.zeros(response_length - lp.size(0), dtype=torch.float)
+                lp = torch.cat([lp, pad_lp], dim=0)
+        else:
+            lp = torch.zeros(response_length, dtype=torch.float)
+
+        rollout_log_probs = lp  # [response_length]  # ★★★ CHANGED: 不再扩展到 [max_prompt_length + response_length]
+
+        # ===== 8. 组装 row_dict：tensor 字段 + 原始非 tensor 字段 =====
+        row_dict = dict(row)
+
+        # tensor 字段：进入 DataProto.batch
+        row_dict["prompts"] = prompts                      # [max_prompt_length]，prompt-only
+        row_dict["responses"] = responses                  # [response_length]，右 pad 后的 response
+        row_dict["input_ids"] = input_ids_full             # [max_prompt_length + response_length]
+        row_dict["attention_mask"] = attention_full        # [max_prompt_length + response_length]
+        row_dict["position_ids"] = position_full           # [max_prompt_length + response_length]
+        row_dict["response_mask"] = response_mask          # [response_length]  ★★★ 对齐 compute_log_prob
+        row_dict["rollout_log_probs"] = rollout_log_probs  # [response_length]  ★★★ 对齐在线 rollout
+
+        # 非 tensor 字段（messages / request_id / repo / instance_id / turn / prompt / gold_completion / reward ...）
+        # 保留 HF 中原本的类型即可，DataProto.from_single_dict 会自动放到 non_tensor_batch
+        return row_dict

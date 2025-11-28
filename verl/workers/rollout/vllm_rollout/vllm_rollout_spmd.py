@@ -188,6 +188,7 @@ class vLLMRollout(BaseRollout):
                 )
             else:
                 logger.warning(f"cudagraph_capture_sizes must be a list, but got {cudagraph_capture_sizes}")
+        
 
         self.inference_engine = LLM(
             model=model_path,
@@ -212,7 +213,6 @@ class vLLMRollout(BaseRollout):
             **self.lora_kwargs,
             **engine_kwargs,
         )
-
         kwargs = dict(
             n=1,
             logprobs=0,  # can be set to 0 and let actor to recompute
@@ -341,6 +341,8 @@ class vLLMRollout(BaseRollout):
 
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**kwargs):
+            print("sampling_params")
+            print(self.sampling_params)
             outputs = self.inference_engine.generate(
                 prompts=vllm_inputs,  # because we have already convert it to prompt token id
                 sampling_params=self.sampling_params,
