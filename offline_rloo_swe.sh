@@ -1,15 +1,15 @@
 set -x
 export CUDA_LAUNCH_BLOCKING=1
-CUDA_VISIBLE_DEVICES=0,3,5,6
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8
 
-swe_train_path=/data/hxy/verl_withoutrollout/dataset/4b_merged_parquet/train.parquet
-swe_test_path=/data/hxy/verl_withoutrollout/dataset/4b_merged_parquet/test.parquet
+swe_train_path=/scratch/azureml/cr/j/588504a81f5c47d6aa9bde1908aa3256/exe/wd/repo/verl_withoutrollout/dataset/4b_merged_parquet/train.parquet
+swe_test_path=/scratch/azureml/cr/j/588504a81f5c47d6aa9bde1908aa3256/exe/wd/repo/verl_withoutrollout/dataset/4b_merged_parquet/train.parquet
 
 python3 -m verl.trainer.main_offline_ppo \
     algorithm.adv_estimator=rloo \
     data.train_files=$swe_train_path \
     data.val_files=$swe_test_path \
-    data.train_batch_size=4  \
+    data.train_batch_size=100  \
     data.max_prompt_length=60000 \
     data.max_response_length=4096 \
     data.filter_overlong_prompts=True \
@@ -24,16 +24,16 @@ python3 -m verl.trainer.main_offline_ppo \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-    actor_rollout_ref.actor.ulysses_sequence_parallel_size=2 \
+    actor_rollout_ref.actor.ulysses_sequence_parallel_size=4 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
-    actor_rollout_ref.ref.ulysses_sequence_parallel_size=2 \
+    actor_rollout_ref.ref.ulysses_sequence_parallel_size=4 \
     algorithm.use_kl_in_reward=True \
     algorithm.kl_penalty=kl \
     algorithm.kl_ctrl.kl_coef=0.001 \
@@ -41,7 +41,7 @@ python3 -m verl.trainer.main_offline_ppo \
     trainer.logger='["console"]' \
     trainer.project_name='verl_rloo_offline_swe' \
     trainer.experiment_name='function_rm' \
-    trainer.n_gpus_per_node=4 \
+    trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.save_freq=100 \
     trainer.test_freq=10000 \

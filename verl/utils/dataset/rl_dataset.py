@@ -402,11 +402,9 @@ class OfflineSweDataset(RLHFDataset):
     def __init__(self, data_files, tokenizer, config, processor: Optional[ProcessorMixin] = None):
         super().__init__(data_files=data_files, tokenizer=tokenizer, config=config, processor=processor)
 
-        # 复用原有配置
         self.truncation = self.config.get("truncation", "error")
         self.max_prompt_length = self.config.get("max_prompt_length", 1024)
 
-        # offline 额外的长度配置：response 和 总长度（目前没用到也没关系）
         self.offline_max_response_length = self.config.get(
             "offline_max_response_length",
             self.max_prompt_length,
