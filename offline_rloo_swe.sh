@@ -39,8 +39,8 @@ python3 -m verl.trainer.main_offline_ppo \
     algorithm.kl_ctrl.kl_coef=0.001 \
     trainer.critic_warmup=0 \
     trainer.logger='["console"]' \
-    trainer.project_name='verl_rloo_offline_swe' \
-    trainer.experiment_name='function_rm' \
+    trainer.project_name='agl_cc_offline' \
+    trainer.experiment_name='qwen3_4b' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.save_freq=100 \

@@ -1738,9 +1738,10 @@ class RayPPOTrainer:
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
 
                 # add uid to batch
-                batch.non_tensor_batch["uid"] = np.array(
-                    [str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object
-                )
+                # batch.non_tensor_batch["uid"] = np.array(
+                #     [str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object
+                # )
+                batch.non_tensor_batch["uid"] = batch.non_tensor_batch["instance_id"]
 
                 gen_batch = self._get_gen_batch(batch)
 

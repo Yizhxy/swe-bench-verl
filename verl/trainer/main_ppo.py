@@ -354,6 +354,9 @@ def create_rl_dataset(data_paths, data_config, tokenizer, processor, is_train=Tr
     else:
         # Use the default RLHFDataset class if no custom class is specified
         dataset_cls = RLHFDataset
+
+    from verl.utils.dataset.rl_dataset import RLHFDataset, OfflineSweDataset
+    dataset_cls = OfflineSweDataset
     print(f"Using dataset class: {dataset_cls.__name__}")
 
     # Instantiate the dataset using the determined dataset class
