@@ -2,14 +2,14 @@ set -x
 export CUDA_LAUNCH_BLOCKING=1
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8
 
-swe_train_path=/scratch/azureml/cr/j/588504a81f5c47d6aa9bde1908aa3256/exe/wd/repo/verl_withoutrollout/dataset/4b_merged_parquet/train.parquet
-swe_test_path=/scratch/azureml/cr/j/588504a81f5c47d6aa9bde1908aa3256/exe/wd/repo/verl_withoutrollout/dataset/4b_merged_parquet/train.parquet
+swe_train_path=/data/hxy/swebench_verified_filtered-qwen3_4b/datasets/epoch_0/train.pqrquet
+swe_test_path=/data/hxy/swebench_verified_filtered-qwen3_4b/datasets/epoch_0/test.pqrquet
 
 python3 -m verl.trainer.main_offline_ppo \
     algorithm.adv_estimator=rloo \
     data.train_files=$swe_train_path \
     data.val_files=$swe_test_path \
-    data.train_batch_size=100  \
+    data.train_batch_size=8  \
     data.max_prompt_length=60000 \
     data.max_response_length=4096 \
     data.filter_overlong_prompts=True \
@@ -38,8 +38,8 @@ python3 -m verl.trainer.main_offline_ppo \
     algorithm.kl_penalty=kl \
     algorithm.kl_ctrl.kl_coef=0.001 \
     trainer.critic_warmup=0 \
-    trainer.logger='["console"]' \
-    trainer.project_name='agl_cc_offline' \
+    trainer.logger='["console","wandb"]' \
+    trainer.project_name='agl_cc_onestepoffline' \
     trainer.experiment_name='qwen3_4b' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
