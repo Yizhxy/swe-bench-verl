@@ -308,6 +308,22 @@ def compute_grpo_outcome_advantage(
         bsz = scores.shape[0]
         for i in range(bsz):
             id2score[index[i]].append(scores[i])
+        # 
+        group_sizes = {idx: len(v) for idx, v in id2score.items()}
+        sorted_items = sorted(group_sizes.items(), key=lambda x: x[0])
+        print("[GRPO] group sizes (id -> size):")
+        for j, (gid, size) in enumerate(sorted_items):
+            if j >= 50:
+                print(f"... ({len(sorted_items) - 50} more groups omitted)")
+                break
+            print(f"  {gid}: {size}")
+
+        # 
+        sizes = list(group_sizes.values())
+        if sizes:
+            import statistics as stats
+            mean_sz = stats.mean(sizes)
+            print(f"[GRPO] num_groups={len(sizes)}, min={min(sizes)}, max={max(sizes)}, mean={mean_sz:.2f}")
         for idx in id2score:
             if len(id2score[idx]) == 1:
                 id2mean[idx] = torch.tensor(0.0)

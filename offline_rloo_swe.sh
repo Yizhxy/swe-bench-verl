@@ -6,10 +6,10 @@ swe_train_path=/data/hxy/swebench_verified_filtered-qwen3_4b/datasets/epoch_0/tr
 swe_test_path=/data/hxy/swebench_verified_filtered-qwen3_4b/datasets/epoch_0/test.pqrquet
 
 python3 -m verl.trainer.main_offline_ppo \
-    algorithm.adv_estimator=rloo \
+    algorithm.adv_estimator=grpo \
     data.train_files=$swe_train_path \
     data.val_files=$swe_test_path \
-    data.train_batch_size=8  \
+    data.train_batch_size=100  \
     data.max_prompt_length=60000 \
     data.max_response_length=4096 \
     data.filter_overlong_prompts=True \
