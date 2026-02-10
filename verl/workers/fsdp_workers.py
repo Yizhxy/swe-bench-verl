@@ -861,7 +861,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         from verl.utils.tracking import Tracking
 
         mini_logger = Tracking(
-            project_name="verl__offline",
+            project_name="verl_offline_b200",
             experiment_name="test",
             default_backend="wandb",
         )
