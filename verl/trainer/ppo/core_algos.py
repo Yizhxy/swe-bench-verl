@@ -897,38 +897,26 @@ def compute_policy_loss(
     return pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower
 
 @torch.no_grad()
-def compute_abs_log_ratio_metrics(log_prob: torch.Tensor,
-                                  old_log_prob: torch.Tensor,
-                                  response_mask: torch.Tensor):
-    """
-    Args:
-        log_prob, old_log_prob: (B, T)
-        response_mask: (B, T)  1=valid token, 0=pad
-    Returns:
-        dict with:
-          abs_log_ratio_p95
-          abs_log_ratio_p99
-          abs_log_ratio_max
-    """
-    # log ratio
-    log_ratio = log_prob - old_log_prob          # (B, T)
+def compute_abs_log_ratio_metrics(log_prob, old_log_prob, response_mask):
+    log_ratio = log_prob - old_log_prob
     abs_log_ratio = log_ratio.abs()
 
-    # flatten valid tokens
-    vals = abs_log_ratio[response_mask.bool()]  # (N_valid_tokens,)
-
+    vals = abs_log_ratio[response_mask.bool()]
     if vals.numel() == 0:
-        zero = torch.tensor(0.0, device=log_prob.device)
         return {
-            "abs_log_ratio_p95": zero,
-            "abs_log_ratio_p99": zero,
-            "abs_log_ratio_max": zero,
+            "abs_log_ratio_p95": 0.0,
+            "abs_log_ratio_p99": 0.0,
+            "abs_log_ratio_max": 0.0,
         }
 
+    p95 = torch.quantile(vals, 0.95).item()
+    p99 = torch.quantile(vals, 0.99).item()
+    mx  = vals.max().item()
+
     return {
-        "abs_log_ratio_p95": torch.quantile(vals, 0.95),
-        "abs_log_ratio_p99": torch.quantile(vals, 0.99),
-        "abs_log_ratio_max": vals.max(),
+        "abs_log_ratio_p95": p95,
+        "abs_log_ratio_p99": p99,
+        "abs_log_ratio_max": mx,
     }
 
 
