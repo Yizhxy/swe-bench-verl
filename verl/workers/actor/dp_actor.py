@@ -364,7 +364,7 @@ class DataParallelPPOActor(BasePPOActor):
         ckpt_root=None,
         ckpt_hdfs=None,
     ):
-        default_local_dir = "/data/hxy/checkpoints/verl_offline_swe_re/minibatch_32"
+        default_local_dir = "/data/hxy/checkpoints/verl_offline_swe_re/minibatch_32_2"
 
         # make sure we are in training mode
         self.actor_module.train()
@@ -474,6 +474,7 @@ class DataParallelPPOActor(BasePPOActor):
                         ppo_kl,
                         pg_clipfrac_lower,
                         is_ratio,
+                        abs_log_ratio_metrics,
                     ) = policy_loss_fn(
                         old_log_prob=old_log_prob,
                         log_prob=log_prob,
@@ -521,8 +522,15 @@ class DataParallelPPOActor(BasePPOActor):
                             "actor/ppo_kl": ppo_kl.detach().item(),
                             "actor/pg_clipfrac_lower": pg_clipfrac_lower.detach().item(),
                             "actor/is_ratio": is_ratio.detach().item(),
+
                         },
                     )
+                    
+                    append_to_dict(
+                        mini_batch_metrics,
+                        {f"actor/{k}": v for k, v in abs_log_ratio_metrics.items()},
+                    )
+
 
                 grad_norm = self._optimizer_step()
                 mini_batch_metrics["actor/grad_norm"] = grad_norm.detach().item()

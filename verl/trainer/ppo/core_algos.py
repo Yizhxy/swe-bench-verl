@@ -896,6 +896,41 @@ def compute_policy_loss(
 
     return pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower
 
+@torch.no_grad()
+def compute_abs_log_ratio_metrics(log_prob: torch.Tensor,
+                                  old_log_prob: torch.Tensor,
+                                  response_mask: torch.Tensor):
+    """
+    Args:
+        log_prob, old_log_prob: (B, T)
+        response_mask: (B, T)  1=valid token, 0=pad
+    Returns:
+        dict with:
+          abs_log_ratio_p95
+          abs_log_ratio_p99
+          abs_log_ratio_max
+    """
+    # log ratio
+    log_ratio = log_prob - old_log_prob          # (B, T)
+    abs_log_ratio = log_ratio.abs()
+
+    # flatten valid tokens
+    vals = abs_log_ratio[response_mask.bool()]  # (N_valid_tokens,)
+
+    if vals.numel() == 0:
+        zero = torch.tensor(0.0, device=log_prob.device)
+        return {
+            "abs_log_ratio_p95": zero,
+            "abs_log_ratio_p99": zero,
+            "abs_log_ratio_max": zero,
+        }
+
+    return {
+        "abs_log_ratio_p95": torch.quantile(vals, 0.95),
+        "abs_log_ratio_p99": torch.quantile(vals, 0.99),
+        "abs_log_ratio_max": vals.max(),
+    }
+
 
 @register_policy_loss("vanilla")  # type: ignore[arg-type]
 def compute_policy_loss_vanilla(
@@ -981,8 +1016,10 @@ def compute_policy_loss_vanilla(
 
     pg_loss = agg_loss(loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
     ratio_mean = verl_F.masked_mean(ratio, response_mask)
+    abs_log_ratio_metrics = compute_abs_log_ratio_metrics(log_prob, old_log_prob, response_mask)
 
-    return pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower,ratio_mean
+    return pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower,ratio_mean, abs_log_ratio_metrics
+
 
 
 @register_policy_loss("gspo")
