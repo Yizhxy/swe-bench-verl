@@ -1,18 +1,18 @@
 set -x
 export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
-export RAY_OBJECT_STORE_MEMORY=64424509440
+export RAY_OBJECT_STORE_MEMORY=966367641600
 export RAY_object_spilling_config='{"type":"filesystem","params":{"directory_path":"/vllm-workspace/ray_spill"}}'
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
-swe_train_path=/data/hxy/swebench_verified_filtered-qwen3_4b/datasets/epoch_0/train.parquet
-swe_test_path=/data/hxy/swebench_verified_filtered-qwen3_4b/datasets/epoch_0/test.parquet
+swe_train_path=/data/hxy/swebench_verified_filtered-qwen3_4b/datasets/epoch_0/top_instance_ids_3600.parquet
+swe_test_path=/data/hxy/swebench_verified_filtered-qwen3_4b/datasets/epoch_0/top_instance_ids_3600.parquet
 
 python3 -m verl.trainer.main_offline_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=$swe_train_path \
     data.val_files=$swe_test_path \
-    data.train_batch_size=8000  \
+    data.train_batch_size=3200  \
     data.max_prompt_length=60000 \
     data.max_response_length=4096 \
     data.filter_overlong_prompts=True \
@@ -22,7 +22,7 @@ python3 -m verl.trainer.main_offline_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=8 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
@@ -42,13 +42,13 @@ python3 -m verl.trainer.main_offline_ppo \
     algorithm.kl_ctrl.kl_coef=0.001 \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
-    trainer.project_name='agl_cc_onestepoffline' \
-    trainer.experiment_name='qwen3_4b' \
+    trainer.project_name='agl_cc_onestepoffline_bs' \
+    trainer.experiment_name='qwen3_4b_bs32' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.save_freq=100 \
     trainer.test_freq=10000 \
-    trainer.total_epochs=1 2>&1 | tee /data/hxy/verl_offline.log
+    trainer.total_epochs=1 2>&1 | tee /data/hxy/16_verl_offline.log
 
 
 # trainer.logger='["console","wandb"]'

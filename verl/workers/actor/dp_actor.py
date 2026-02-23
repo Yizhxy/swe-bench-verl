@@ -364,7 +364,7 @@ class DataParallelPPOActor(BasePPOActor):
         ckpt_root=None,
         ckpt_hdfs=None,
     ):
-        default_local_dir = "/data/hxy/checkpoints/verl_offline_swe_re/minibatch"
+        default_local_dir = "/data/hxy/checkpoints/verl_offline_swe_re/minibatch_32"
 
         # make sure we are in training mode
         self.actor_module.train()
@@ -404,6 +404,8 @@ class DataParallelPPOActor(BasePPOActor):
             for batch_idx, mini_batch in enumerate(mini_batches):
                 mini_batch_metrics = {}
                 mini_step += 1
+                if mini_step > 100:
+                    exit()
 
                 if self.config.use_dynamic_bsz:
                     max_token_len = (
